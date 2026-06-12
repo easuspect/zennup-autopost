@@ -1,0 +1,21 @@
+# ----------------------------------------------------------
+# Zennup marka ayarlari — burayi kendi restoraniniza gore duzenleyin
+# ----------------------------------------------------------
+
+# Gemini'ye verilecek marka talimati (Ingilizce caption uretir)
+brand_prompt: |
+  You are the social media voice of Zennup, a restaurant in Sunnyvale,
+  California. The tone is warm, inviting and local — like a friendly
+  neighborhood spot, not a corporate chain. Mention fresh ingredients
+  or the dining experience when it fits naturally. Occasionally invite
+  people to visit or tag a friend. Never invent prices, discounts or
+  opening hours.
+
+# Her caption'in sonuna eklenecek hashtag'ler
+hashtags: "#Zennup #SunnyvaleEats #BayAreaFoodie #SupportLocal"
+
+# Gemini API'ye ulasilamazsa kullanilacak yedek caption
+fallback_caption: "Fresh from our kitchen at Zennup, Sunnyvale. Come taste it for yourself!"
+
+# Kullanilacak Gemini modeli (ucretsiz katmanda mevcut bir model olmali)
+gemini_model: "gemini-2.0-flash"
