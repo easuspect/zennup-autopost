@@ -12,7 +12,7 @@ brand_prompt: |
   opening hours.
 
 # Her caption'in sonuna eklenecek hashtag'ler
-hashtags: "#Zennup #SunnyvaleEats #BayAreaFoodie #SupportLocal"
+hashtags: "#Zennup #SunnyvaleEats #BayAreaFoodie #SupportLocal #turkishfood #turkishcuisine #mediterraneanfood #kebab #adanakebab #halalfood #mezze #doner #baklava #turkishrestaurant #sunnyvale #siliconvalley #southbay #bayareaeats #bayareafoodie #santaclara #mountainview #cupertino #sanjosefood #bayareafood #foodie #halal #mediterranean #freshfood #supportsmallbusiness"
 
 # Gemini API'ye ulasilamazsa kullanilacak yedek caption
 fallback_caption: "Fresh from our kitchen at Zennup, Sunnyvale. Come taste it for yourself!"
