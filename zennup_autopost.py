@@ -6,7 +6,7 @@ Gemini ile Ingilizce bir caption uretir, Instagram + Facebook'a paylasir,
 sonra dosyayi media/posted/ klasorune tasir.
 
 Gerekli ortam degiskenleri (GitHub Secrets olarak tanimlanir):
-  META_ACCESS_TOKEN  -> Facebook Sayfa erisim token'i (uzun omurlu)
+  META_ACCESS_TOKEN  -> Facebook Sayfa erisim token'i (Page Token, uzun omurlu)
   IG_USER_ID         -> Instagram Business hesap ID'si
   FB_PAGE_ID         -> Facebook Sayfa ID'si
   GEMINI_API_KEY     -> Google AI Studio'dan ucretsiz anahtar
@@ -108,7 +108,9 @@ def ig_create_container(media_url: str, caption: str, is_video: bool) -> str:
 
 
 def ig_wait_until_ready(container_id: str, timeout_sec: int = 300) -> None:
-    """Video islenene kadar bekler (resimler genelde aninda hazirdir)."""
+    """Container yayinlanmaya hazir olana kadar bekler.
+    Hem resim hem video icin calisir. Resimler genelde birkac saniyede,
+    videolar daha uzun surede FINISHED olur."""
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
         r = requests.get(
@@ -122,20 +124,46 @@ def ig_wait_until_ready(container_id: str, timeout_sec: int = 300) -> None:
         if status == "FINISHED":
             return
         if status == "ERROR":
-            sys.exit("HATA: Instagram videoyu isleyemedi. Dosya formatini kontrol edin (MP4/H.264 onerilir).")
-        time.sleep(10)
-    sys.exit("HATA: Instagram video isleme zaman asimina ugradi.")
+            raise RuntimeError(
+                "Instagram medyayi isleyemedi. Dosya formatini/oranini kontrol edin "
+                "(resim: JPG/PNG, video: MP4/H.264 onerilir)."
+            )
+        # IN_PROGRESS veya henuz hazir degil -> biraz bekle, tekrar dene
+        time.sleep(5)
+    raise RuntimeError("Instagram medya isleme zaman asimina ugradi.")
 
 
-def ig_publish(container_id: str) -> str:
-    r = requests.post(
-        f"{GRAPH}/{env('IG_USER_ID')}/media_publish",
-        data={"creation_id": container_id,
-              "access_token": env("META_ACCESS_TOKEN")},
-        timeout=120,
-    )
-    _check(r, "Instagram yayinlama")
-    return r.json()["id"]
+def ig_publish(container_id: str, retries: int = 5) -> str:
+    """Yayinlar. 'Media not ready' (subcode 2207027) hatasinda kisa bekleyip tekrar dener."""
+    last_text = ""
+    for attempt in range(1, retries + 1):
+        r = requests.post(
+            f"{GRAPH}/{env('IG_USER_ID')}/media_publish",
+            data={"creation_id": container_id,
+                  "access_token": env("META_ACCESS_TOKEN")},
+            timeout=120,
+        )
+        if r.status_code < 400:
+            return r.json()["id"]
+
+        last_text = r.text
+        # Medya henuz hazir degilse Instagram bunu doner; bekleyip tekrar deneriz
+        if "2207027" in r.text or "not ready" in r.text.lower():
+            wait = attempt * 5  # 5, 10, 15, 20, 25 saniye
+            print(f"  Instagram medya henuz hazir degil, {wait}s bekleniyor "
+                  f"(deneme {attempt}/{retries})...")
+            time.sleep(wait)
+            continue
+        # Baska bir hata -> tekrar denemeden cik
+        break
+    raise RuntimeError(f"Instagram yayinlama basarisiz: {last_text}")
+
+
+def post_to_instagram(media_url: str, caption: str, is_video: bool) -> str:
+    container = ig_create_container(media_url, caption, is_video)
+    # Hem resim hem video icin hazir olmasini bekle
+    ig_wait_until_ready(container)
+    return ig_publish(container)
 
 
 # ---------------------------- FACEBOOK ----------------------------
@@ -155,7 +183,7 @@ def fb_post(media_url: str, caption: str, is_video: bool) -> str:
 
 def _check(r: requests.Response, step: str) -> None:
     if r.status_code >= 400:
-        sys.exit(f"HATA ({step}): {r.status_code} -> {r.text}")
+        raise RuntimeError(f"{step}: {r.status_code} -> {r.text}")
 
 
 # ------------------------------ MAIN -------------------------------
@@ -175,24 +203,39 @@ def main() -> None:
     caption = generate_caption(cfg, media.name)
     print(f"Caption:\n{caption}\n")
 
+    # Her platform bagimsiz denenir; biri patlasa digeri devam eder.
+    any_success = False
+
     # Instagram (IG_USER_ID secret'i tanimliysa; degilse atlanir)
     if os.environ.get("IG_USER_ID", "").strip():
-        container = ig_create_container(media_url, caption, is_video)
-        if is_video:
-            ig_wait_until_ready(container)
-        ig_post_id = ig_publish(container)
-        print(f"Instagram'da yayinlandi (post id: {ig_post_id})")
+        try:
+            ig_post_id = post_to_instagram(media_url, caption, is_video)
+            print(f"Instagram'da yayinlandi (post id: {ig_post_id})")
+            any_success = True
+        except Exception as exc:
+            print(f"HATA (Instagram): {exc}")
     else:
-        print("IG_USER_ID tanimli degil -> Instagram atlandi (sadece Facebook).")
+        print("IG_USER_ID tanimli degil -> Instagram atlandi.")
 
     # Facebook
-    fb_post_id = fb_post(media_url, caption, is_video)
-    print(f"Facebook'ta yayinlandi (post id: {fb_post_id})")
+    try:
+        fb_post_id = fb_post(media_url, caption, is_video)
+        print(f"Facebook'ta yayinlandi (post id: {fb_post_id})")
+        any_success = True
+    except Exception as exc:
+        print(f"HATA (Facebook): {exc}")
 
-    # Dosyayi posted klasorune tasi (commit'i GitHub Actions yapar)
-    POSTED_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(media), str(POSTED_DIR / media.name))
-    print(f"{media.name} -> media/posted/ klasorune tasindi. Bitti!")
+    # En az bir platform basariliysa dosyayi arsive tasi.
+    # Hicbiri basarili degilse dosya queue'da kalsin ki tekrar denenebilsin.
+    if any_success:
+        POSTED_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(media), str(POSTED_DIR / media.name))
+        print(f"{media.name} -> media/posted/ klasorune tasindi.")
+    else:
+        print(f"Hicbir platforma paylasilmadi. {media.name} queue'da birakildi.")
+        sys.exit("HATA: Tum platformlar basarisiz oldu.")
+
+    print("Bitti!")
 
 
 if __name__ == "__main__":
